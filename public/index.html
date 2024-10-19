@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Map Creator</title>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-firestore.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+        #mapGrid { display: grid; gap: 1px; margin-top: 20px; }
+        .cell { width: 20px; height: 20px; border: 1px solid #ccc; }
+        .obstacle { background-color: #333; }
+        .start { background-color: green; }
+        .finish { background-color: red; }
+    </style>
+</head>
+<body>
+    <h1>Map Creator</h1>
+    <div>
+        <label for="buildingName">Building Name:</label>
+        <input type="text" id="buildingName" required>
+    </div>
+    <div>
+        <label for="floorNumber">Floor Number:</label>
+        <input type="number" id="floorNumber" min="1" value="1" required>
+    </div>
+    <div>
+        <label for="mapWidth">Width:</label>
+        <input type="number" id="mapWidth" min="5" max="20" value="10" required>
+        <label for="mapHeight">Height:</label>
+        <input type="number" id="mapHeight" min="5" max="20" value="10" required>
+    </div>
+    <button onclick="generateMap()">Generate Map</button>
+    <button onclick="saveMap()">Save Map</button>
+    <div>
+        <select id="buildingSelect" onchange="loadFloors()"></select>
+        <select id="floorSelect" onchange="loadMap()"></select>
+        <button onclick="setAsCurrentMap()">Set as Current Map</button>
+    </div>
+    <div id="mapGrid"></div>
+
+    <script>
+        // Initialize Firebase (replace with your config)
+        const firebaseConfig = {
+        apiKey: "AIzaSyDjFlH-hin9wfsLD-wHiy19Z69m_X0T0GQ",
+        authDomain: "exitmatrix-16eb4.firebaseapp.com",
+        projectId: "exitmatrix-16eb4",
+        storageBucket: "exitmatrix-16eb4.appspot.com",
+        messagingSenderId: "531360581",
+        appId: "1:531360581:web:1649331c805e7c7d8b2c2c"
+        };
+        
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+
+        let currentMap = [];
+
+        function generateMap() {
+            const width = parseInt(document.getElementById('mapWidth').value);
+            const height = parseInt(document.getElementById('mapHeight').value);
+            currentMap = Array(height).fill().map(() => Array(width).fill('.'));
+            renderMap();
+        }
+
+        function renderMap() {
+            const grid = document.getElementById('mapGrid');
+            grid.innerHTML = '';
+            grid.style.gridTemplateColumns = `repeat(${currentMap[0].length}, 20px)`;
+
+            currentMap.forEach((row, y) => {
+                row.forEach((cell, x) => {
+                    const div = document.createElement('div');
+                    div.className = 'cell';
+                    div.onclick = () => toggleCell(x, y);
+                    if (cell === '0') div.classList.add('obstacle');
+                    if (cell === 'S') div.classList.add('start');
+                    if (cell === 'F') div.classList.add('finish');
+                    grid.appendChild(div);
+                });
+            });
+        }
+
+        function toggleCell(x, y) {
+            const cell = currentMap[y][x];
+            if (cell === '.') currentMap[y][x] = '0';
+            else if (cell === '0') currentMap[y][x] = 'S';
+            else if (cell === 'S') currentMap[y][x] = 'F';
+            else currentMap[y][x] = '.';
+            renderMap();
+        }
+
+        function mapToString(map) {
+            return map.map(row => row.join('')).join('|');
+        }
+
+        function stringToMap(str) {
+            return str.split('|').map(row => row.split(''));
+        }
+
+        async function saveMap() {
+            const buildingName = document.getElementById('buildingName').value;
+            const floorNumber = parseInt(document.getElementById('floorNumber').value);
+            if (!buildingName) {
+                alert('Please enter a building name');
+                return;
+            }
+            try {
+                const mapString = mapToString(currentMap);
+                await db.collection('buildings').doc(buildingName).set({
+                    [`floor_${floorNumber}`]: mapString
+                }, { merge: true });
+                alert('Map saved successfully');
+                loadBuildings();
+            } catch (error) {
+                console.error('Error saving map: ', error);
+                alert('Error saving map');
+            }
+        }
+
+        async function loadBuildings() {
+            const select = document.getElementById('buildingSelect');
+            select.innerHTML = '<option value="">Select a building</option>';
+            try {
+                const snapshot = await db.collection('buildings').get();
+                snapshot.forEach(doc => {
+                    const option = document.createElement('option');
+                    option.value = doc.id;
+                    option.textContent = doc.id;
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Error loading buildings: ', error);
+            }
+        }
+
+        async function loadFloors() {
+            const buildingName = document.getElementById('buildingSelect').value;
+            const select = document.getElementById('floorSelect');
+            select.innerHTML = '<option value="">Select a floor</option>';
+            if (!buildingName) return;
+            try {
+                const doc = await db.collection('buildings').doc(buildingName).get();
+                if (doc.exists) {
+                    const data = doc.data();
+                    Object.keys(data).forEach(key => {
+                        if (key.startsWith('floor_')) {
+                            const option = document.createElement('option');
+                            option.value = key;
+                            option.textContent = `Floor ${key.split('_')[1]}`;
+                            select.appendChild(option);
+                        }
+                    });
+                }
+            } catch (error) {
+                console.error('Error loading floors: ', error);
+            }
+        }
+
+        async function loadMap() {
+            const buildingName = document.getElementById('buildingSelect').value;
+            const floorKey = document.getElementById('floorSelect').value;
+            if (!buildingName || !floorKey) return;
+            try {
+                const doc = await db.collection('buildings').doc(buildingName).get();
+                if (doc.exists) {
+                    const data = doc.data();
+                    const mapString = data[floorKey];
+                    currentMap = stringToMap(mapString);
+                    document.getElementById('buildingName').value = buildingName;
+                    document.getElementById('floorNumber').value = floorKey.split('_')[1];
+                    document.getElementById('mapWidth').value = currentMap[0].length;
+                    document.getElementById('mapHeight').value = currentMap.length;
+                    renderMap();
+                }
+            } catch (error) {
+                console.error('Error loading map: ', error);
+            }
+        }
+
+        async function setAsCurrentMap() {
+            const buildingName = document.getElementById('buildingSelect').value;
+            const floorKey = document.getElementById('floorSelect').value;
+            if (!buildingName || !floorKey) {
+                alert('Please select a building and floor');
+                return;
+            }
+            try {
+                const mapString = mapToString(currentMap);
+                await db.collection('current_map').doc('info').set({
+                    buildingName: buildingName,
+                    floorNumber: parseInt(floorKey.split('_')[1]),
+                    layout: mapString
+                });
+                alert('Current map updated successfully');
+            } catch (error) {
+                console.error('Error updating current map: ', error);
+                alert('Error updating current map');
+            }
+        }
+
+        // Initial load of buildings
+        loadBuildings();
+    </script>
+</body>
+</html>
